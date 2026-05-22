@@ -38,10 +38,10 @@ TextEncoding::setConvertersFromOptions(TextEncoding &TE,
     return std::error_code();
   ErrorOr<TextEncodingConverter> ErrorOrConverter =
       llvm::TextEncodingConverter::create(UTF8, TE.LiteralEncoding);
-  if (ErrorOrConverter)
+  if (ErrorOrConverter) {
     TE.ToLiteralEncodingConverter =
         std::make_unique<TextEncodingConverter>(std::move(*ErrorOrConverter));
-    TInfo.ExecStrConverter = TEC.ToLiteralEncodingConverter.get();
+    TInfo.ExecStrConverter = TE.ToLiteralEncodingConverter.get();
   } else
     return ErrorOrConverter.getError();
 
