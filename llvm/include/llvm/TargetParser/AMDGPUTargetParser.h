@@ -47,6 +47,12 @@ struct IsaVersion {
   unsigned Major;
   unsigned Minor;
   unsigned Stepping;
+
+  bool operator==(const IsaVersion &Other) const {
+    return Major == Other.Major && Minor == Other.Minor &&
+           Stepping == Other.Stepping;
+  }
+  bool operator!=(const IsaVersion &Other) const { return !(*this == Other); }
 };
 
 // This isn't comprehensive for now, just things that are needed from the
