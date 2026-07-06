@@ -291,6 +291,101 @@ define void @user_already_vectorized(ptr %ptr, ptr %ptr2, float %a, float %b) {
   store float %fadd1b, ptr %ptr2_3, align 4
   ret void
 }
+; The fadd user bundle passes the getNextUserBundle() checks (same opcode,
+; type, BB, operand index) but legality returns Pack due to different
+; fast-math flags. The recursion must stop there: loads widen, fadds stay
+; scalar and are fed by unpacks.
+define void @user_diff_fast_math_flags(ptr %ptr, ptr %ptr2) {
+; CHECK-LABEL: define void @user_diff_fast_math_flags(
+; CHECK-SAME: ptr [[PTR:%.*]], ptr [[PTR2:%.*]]) {
+; CHECK-NEXT:    [[PTR0:%.*]] = getelementptr float, ptr [[PTR]], i32 0
+; CHECK-NEXT:    [[PTR2_0:%.*]] = getelementptr float, ptr [[PTR2]], i32 0
+; CHECK-NEXT:    [[PTR2_1:%.*]] = getelementptr float, ptr [[PTR2]], i32 1
+; CHECK-NEXT:    [[VECL:%.*]] = load <2 x float>, ptr [[PTR0]], align 4, !sandboxvec [[META9:![0-9]+]]
+; CHECK-NEXT:    [[UNPACK:%.*]] = extractelement <2 x float> [[VECL]], i32 0, !sandboxvec [[META9]]
+; CHECK-NEXT:    [[UNPACK1:%.*]] = extractelement <2 x float> [[VECL]], i32 1, !sandboxvec [[META9]]
+; CHECK-NEXT:    [[FADD0:%.*]] = fadd fast float [[UNPACK]], [[UNPACK]]
+; CHECK-NEXT:    [[FADD1:%.*]] = fadd float [[UNPACK1]], [[UNPACK1]]
+; CHECK-NEXT:    store float [[FADD0]], ptr [[PTR2_0]], align 4
+; CHECK-NEXT:    store float [[FADD1]], ptr [[PTR2_1]], align 4
+; CHECK-NEXT:    ret void
+;
+  %ptr0 = getelementptr float, ptr %ptr, i32 0
+  %ptr1 = getelementptr float, ptr %ptr, i32 1
+  %ptr2_0 = getelementptr float, ptr %ptr2, i32 0
+  %ptr2_1 = getelementptr float, ptr %ptr2, i32 1
+
+  %ld0 = load float, ptr %ptr0, align 4
+  %ld1 = load float, ptr %ptr1, align 4
+
+  %fadd0 = fadd fast float %ld0, %ld0
+  %fadd1 = fadd float %ld1, %ld1
+
+  store float %fadd0, ptr %ptr2_0, align 4
+  store float %fadd1, ptr %ptr2_1, align 4
+  ret void
+}
+
+; Same as above but the user bundle packs due to different wrap flags
+; (add nsw vs add).
+define void @user_diff_wrap_flags(ptr %ptr, ptr %ptr2) {
+; CHECK-LABEL: define void @user_diff_wrap_flags(
+; CHECK-SAME: ptr [[PTR:%.*]], ptr [[PTR2:%.*]]) {
+; CHECK-NEXT:    [[PTR0:%.*]] = getelementptr i32, ptr [[PTR]], i32 0
+; CHECK-NEXT:    [[PTR2_0:%.*]] = getelementptr i32, ptr [[PTR2]], i32 0
+; CHECK-NEXT:    [[PTR2_1:%.*]] = getelementptr i32, ptr [[PTR2]], i32 1
+; CHECK-NEXT:    [[VECL:%.*]] = load <2 x i32>, ptr [[PTR0]], align 4, !sandboxvec [[META10:![0-9]+]]
+; CHECK-NEXT:    [[UNPACK:%.*]] = extractelement <2 x i32> [[VECL]], i32 0, !sandboxvec [[META10]]
+; CHECK-NEXT:    [[UNPACK1:%.*]] = extractelement <2 x i32> [[VECL]], i32 1, !sandboxvec [[META10]]
+; CHECK-NEXT:    [[ADD0:%.*]] = add nsw i32 [[UNPACK]], 1
+; CHECK-NEXT:    [[ADD1:%.*]] = add i32 [[UNPACK1]], 1
+; CHECK-NEXT:    store i32 [[ADD0]], ptr [[PTR2_0]], align 4
+; CHECK-NEXT:    store i32 [[ADD1]], ptr [[PTR2_1]], align 4
+; CHECK-NEXT:    ret void
+;
+  %ptr0 = getelementptr i32, ptr %ptr, i32 0
+  %ptr1 = getelementptr i32, ptr %ptr, i32 1
+  %ptr2_0 = getelementptr i32, ptr %ptr2, i32 0
+  %ptr2_1 = getelementptr i32, ptr %ptr2, i32 1
+
+  %ld0 = load i32, ptr %ptr0, align 4
+  %ld1 = load i32, ptr %ptr1, align 4
+
+  %add0 = add nsw i32 %ld0, 1
+  %add1 = add i32 %ld1, 1
+
+  store i32 %add0, ptr %ptr2_0, align 4
+  store i32 %add1, ptr %ptr2_1, align 4
+  ret void
+}
+
+; The store user bundle forms but legality packs it because the stores are
+; not consecutive (there is a gap in the destination).
+define void @user_stores_not_consecutive(ptr %ptr, ptr %ptr2) {
+; CHECK-LABEL: define void @user_stores_not_consecutive(
+; CHECK-SAME: ptr [[PTR:%.*]], ptr [[PTR2:%.*]]) {
+; CHECK-NEXT:    [[PTR0:%.*]] = getelementptr float, ptr [[PTR]], i32 0
+; CHECK-NEXT:    [[PTR2_0:%.*]] = getelementptr float, ptr [[PTR2]], i32 0
+; CHECK-NEXT:    [[PTR2_2:%.*]] = getelementptr float, ptr [[PTR2]], i32 2
+; CHECK-NEXT:    [[VECL:%.*]] = load <2 x float>, ptr [[PTR0]], align 4, !sandboxvec [[META11:![0-9]+]]
+; CHECK-NEXT:    [[UNPACK:%.*]] = extractelement <2 x float> [[VECL]], i32 0, !sandboxvec [[META11]]
+; CHECK-NEXT:    [[UNPACK1:%.*]] = extractelement <2 x float> [[VECL]], i32 1, !sandboxvec [[META11]]
+; CHECK-NEXT:    store float [[UNPACK]], ptr [[PTR2_0]], align 4
+; CHECK-NEXT:    store float [[UNPACK1]], ptr [[PTR2_2]], align 4
+; CHECK-NEXT:    ret void
+;
+  %ptr0 = getelementptr float, ptr %ptr, i32 0
+  %ptr1 = getelementptr float, ptr %ptr, i32 1
+  %ptr2_0 = getelementptr float, ptr %ptr2, i32 0
+  %ptr2_2 = getelementptr float, ptr %ptr2, i32 2
+
+  %ld0 = load float, ptr %ptr0, align 4
+  %ld1 = load float, ptr %ptr1, align 4
+
+  store float %ld0, ptr %ptr2_0, align 4
+  store float %ld1, ptr %ptr2_2, align 4
+  ret void
+}
 ;.
 ; CHECK: [[META0]] = distinct !{!"sandboxregion"}
 ; CHECK: [[META1]] = distinct !{!"sandboxregion"}
@@ -301,4 +396,7 @@ define void @user_already_vectorized(ptr %ptr, ptr %ptr2, float %a, float %b) {
 ; CHECK: [[META6]] = distinct !{!"sandboxregion"}
 ; CHECK: [[META7]] = distinct !{!"sandboxregion"}
 ; CHECK: [[META8]] = distinct !{!"sandboxregion"}
+; CHECK: [[META9]] = distinct !{!"sandboxregion"}
+; CHECK: [[META10]] = distinct !{!"sandboxregion"}
+; CHECK: [[META11]] = distinct !{!"sandboxregion"}
 ;.

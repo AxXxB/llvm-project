@@ -296,41 +296,40 @@ Action *BottomUpVec::vectorizeRec(ArrayRef<Value *> Bndl,
   LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "Legality: " << LegalityRes << "\n");
 
   if (Legality.getDirection() == SchedDirection::TopDown) {
+    // A non-Widen result means we can't extend the vectorized region into
+    // this bundle, so leave its instructions scalar and don't record an
+    // action for it. The scalar users of the already-widened defs get their
+    // values through the unpacks emitted by emitUnpacksForExternalUses().
+    // Note: The DiamondReuse* results are unreachable in the top-down
+    // direction because getNextUserBundle() skips already-vectorized users,
+    // so a bundle never contains instructions registered in IMaps.
+    if (LegalityRes.getSubclassID() != LegalityResultID::Widen)
+      return nullptr;
+
     auto ActionPtr = std::make_unique<Action>(&LegalityRes, Bndl,
                                               ArrayRef<Value *>(), Depth);
     Action *Action = ActionPtr.get();
-    if (LegalityRes.getSubclassID() == LegalityResultID::Widen)
-      IMaps->registerVector(Bndl, Action);
+    IMaps->registerVector(Bndl, Action);
 
     // Pre-order push so defs are before uses.
     Actions.push_back(std::move(ActionPtr));
-    switch (LegalityRes.getSubclassID()) {
-    case LegalityResultID::Widen: {
-      // Walk down the def-use chain. Each lane in \p Bndl may feed several
-      // users, so we form every compatible user bundle and recurse into each
-      // one. A user bundle is compatible only if all of its users share the
-      // same opcode and type, live in the same block, are distinct and not
-      // already vectorized, and consume their corresponding element of \p Bndl
-      // at the same operand index, so that the widened vector lines up as a
-      // single vector operand.
-      //
-      // Recursing right after forming each bundle marks its instructions as
-      // vectorized (pre-order registration), which prevents sibling bundles
-      // from claiming the same instruction and guarantees termination.
-      Value *V0 = Bndl[0];
-      for (User *U0 : V0->users()) {
-        SmallVector<Value *, 4> NextUserBndl =
-            VecUtils::getNextUserBundle(Bndl, U0, V0, *IMaps);
-        if (NextUserBndl.size() == Bndl.size())
-          vectorizeRec(NextUserBndl, Bndl, Depth + 1, Legality);
-      }
-      break;
-    }
-    case LegalityResultID::DiamondReuse:
-    case LegalityResultID::DiamondReuseMultiInput:
-    case LegalityResultID::DiamondReuseWithShuffle:
-    case LegalityResultID::Pack:
-      llvm_unreachable("Not implemented.");
+    // Walk down the def-use chain. Each lane in \p Bndl may feed several
+    // users, so we form every compatible user bundle and recurse into each
+    // one. A user bundle is compatible only if all of its users share the
+    // same opcode and type, live in the same block, are distinct and not
+    // already vectorized, and consume their corresponding element of \p Bndl
+    // at the same operand index, so that the widened vector lines up as a
+    // single vector operand.
+    //
+    // Recursing right after forming each bundle marks its instructions as
+    // vectorized (pre-order registration), which prevents sibling bundles
+    // from claiming the same instruction and guarantees termination.
+    Value *V0 = Bndl[0];
+    for (User *U0 : V0->users()) {
+      SmallVector<Value *, 4> NextUserBndl =
+          VecUtils::getNextUserBundle(Bndl, U0, V0, *IMaps);
+      if (NextUserBndl.size() == Bndl.size())
+        vectorizeRec(NextUserBndl, Bndl, Depth + 1, Legality);
     }
 
     return Action;
